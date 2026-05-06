@@ -143,36 +143,30 @@ def wp(stmt: Stmt, Q: BoolRef) -> BoolRef:
     Compute the weakest precondition of `stmt` w.r.t. postcondition `Q`.
     For while loops, append side VCs to the global `side_vcs` list.
 
-    TODO: Implement all six cases.
     """
     global side_vcs
 
     match stmt:
         case Assign(var, expr):
-            # TODO: Q[var ↦ expr]
-            pass
-
+            #created by Claude as an example for me to see how one would look
+            return z3_substitute_var(Q, var, aexp_to_z3(expr))
         case Seq(s1, s2):
-            # TODO
-            pass
-
+            #Also handed to me by Claude
+            return wp(s1, wp(s2, Q))
         case If(cond, s1, s2):
-            # TODO
-            pass
+            #Corrected by Claude to include the Not on the second Implies.
+            return And(Implies(bexp_to_z3(cond), wp(s1, Q)), Implies(Not(bexp_to_z3(cond)), wp(s2, Q)))
 
         case While(cond, inv, body):
-            # TODO: Return I. Generate two side VCs:
-            #   preservation: I ∧ b → wp(body, I)
-            #   postcondition: I ∧ ¬b → Q
-            pass
-
+            reset_b = bexp_to_z3(cond)
+            changed = bexp_to_z3(inv)
+            side_vcs.append(("preservation", Implies(And(changed, reset_b), wp(body, changed))))
+            side_vcs.append(("postcondition", Implies(And(changed, Not(reset_b)), Q)))
+            return changed
         case Assert(cond):
-            # TODO
-            pass
-
+            return And(bexp_to_z3(cond), Q)
         case Assume(cond):
-            # TODO
-            pass
+            return Implies(bexp_to_z3(cond), Q)
 
         case _:
             raise ValueError(f"Unknown statement: {stmt}")
@@ -184,18 +178,37 @@ def verify(pre: BExp, stmt: Stmt, post: BExp, label: str = "Program"):
     1. Clear side_vcs.  2. Compute wp.  3. Check pre → wp is valid.
     4. Check each side VC.  5. Print results.
 
-    TODO: Implement this function.
     """
     global side_vcs
     side_vcs = []
 
+    # Claude suggested separating out side VCs into their own solver, I tried to do it all in one
+
     pre_z3 = bexp_to_z3(pre)
     post_z3 = bexp_to_z3(post)
 
-    # TODO
+    result = wp(stmt, post_z3)
+
+    solver = Solver()
+    solver.add(And(pre_z3, Not(result)))
+
     print(f"=== {label} ===")
-    print("  TODO: implement verify()")
-    print()
+    side_is_sat = False
+    for check in side_vcs:
+        stupid_side_solver = Solver()
+        stupid_side_solver.add(Not(check[1]))
+        side_result = stupid_side_solver.check()
+        if side_result == unsat:
+            print("side is also unsat. yay.")
+        else:
+            print(f"{check[0]} is SAT")
+            print(f"answer: {stupid_side_solver.model()}")
+            side_is_sat = True
+    solver_result = solver.check()
+    if solver_result == unsat and not side_is_sat:
+        print("unsat! yay")
+    else:
+        print(f"problem is SAT {solver.model() if solver_result == sat else ""}")
 
 
 # ============================================================================
@@ -241,10 +254,17 @@ def test_mult():
         r := r + b;  i := i + 1;
       { r == a * b }
 
-    TODO: Replace the invariant below with a correct one.
+    [EXPLAIN] I found the loop invariant by first poking through the loop and noting the conditions in which it was true.
+    I started with r == b*i, and then ran verify on it to see the conditions in which it failed. This caused me to notice that
+    i and a were acting up, so I set i < a. Then, it gave me a negative i, so I added i > 0. At this point, it gave me an UNSAT answer
+    that looked valid, and I got a bit confused ([i = 0, a = 1, b = -7, r = 0]). At this point, I asked Claude what was wrong with my
+    loop invariant and it told me my condition was too strong. I forgot that it also had to hold on loop exit, and weakened i < a to i <=a.
+
+    This works because it checks what the answer should be for every round of the loop with r == b * i, as these are the multiples that the
+    multiplication would go through. Combined with asserting the edge cases, this covers the full range of scenarios and makes it valid.
     """
     pre = Compare('>=', Var('a'), IntConst(0))
-    inv = BoolConst(True)  # ← WRONG — replace with correct invariant
+    inv = ImpAnd(ImpAnd(Compare("==", Var("r"), BinOp("*", Var("b"), Var("i"))), Compare("<=", Var("i"), Var("a"))), Compare(">=", Var("i"), IntConst(0)))
     body = Seq(Assign('r', BinOp('+', Var('r'), Var('b'))),
                Assign('i', BinOp('+', Var('i'), IntConst(1))))
     stmt = Seq(Assign('i', IntConst(0)),
@@ -263,11 +283,12 @@ def test_add():
         r := r + 1;  i := i + 1;
       { r == n + m }
 
-    TODO: Replace the invariant below with a correct one.
+    [EXPLAIN] I started with r == n + i because that's what the loop is doing. The SAT solver then objected
+    that it wasn't valid over all values of i, so I added an additional constraint to ensure it holds.
     """
     pre = ImpAnd(Compare('>=', Var('n'), IntConst(0)),
                  Compare('>=', Var('m'), IntConst(0)))
-    inv = BoolConst(True)  # ← WRONG — replace with correct invariant
+    inv = ImpAnd(Compare("<=", Var("i"), Var("m")), Compare("==", Var("r"), BinOp("+", Var("n"), Var("i"))))
     body = Seq(Assign('r', BinOp('+', Var('r'), IntConst(1))),
                Assign('i', BinOp('+', Var('i'), IntConst(1))))
     stmt = Seq(Assign('i', IntConst(0)),
@@ -286,10 +307,12 @@ def test_sum():
         s := s + i;  i := i + 1;
       { 2 * s == n * (n + 1) }
 
-    TODO: Replace the invariant below with a correct one.
+    [EXPLAIN] I started with s == i * (i - 1) / 2, as this was the example we discussed in class. I noticed that there
+    wasn't a valid way to express it in IMP, so I multiplied both sides by two to create a valid one. I then slightly modified
+    the while condition to ensure that it is constrainted to the correct set of i.
     """
     pre = Compare('>=', Var('n'), IntConst(1))
-    inv = BoolConst(True)  # ← WRONG — replace with correct invariant
+    inv = ImpAnd(Compare("<=", Var("i"), BinOp("+", Var("n"), IntConst(1))), Compare("==", BinOp("*", Var("s"), IntConst(2)), BinOp("*", Var("i"), BinOp("-", Var("i"), IntConst(1)))))  # ← WRONG — replace with correct invariant
     body = Seq(Assign('s', BinOp('+', Var('s'), Var('i'))),
                Assign('i', BinOp('+', Var('i'), IntConst(1))))
     stmt = Seq(Assign('i', IntConst(1)),
@@ -344,12 +367,38 @@ def test_buggy_div():
 
     verify(pre, stmt, post, "Buggy Division (should FAIL)")
 
-    # TODO: Uncomment and fix the invariant below, then re-verify.
     # inv_fixed = ImpAnd(
     #     Compare('==', BinOp('+', BinOp('*', Var('q'), Var('y')), Var('r')), Var('x')),
     #     ???  # ← Add the missing conjunct
     # )
     # ... rebuild stmt with inv_fixed and call verify(...)
+
+    # The SAT solver provides this example as a counterexample: [x = -6, y = -4, r = -6, q = 0]. This indicates
+    # that the postcondition fails
+    # So, I added the loop exit condition, modified to cover when the loop exits but not invalid values.
+
+    pre = ImpAnd(Compare('>=', Var('x'), IntConst(0)),
+                 Compare('>', Var('y'), IntConst(0)))
+
+    # BUGGY invariant — intentionally too weak
+    inv_fixed = ImpAnd(
+            Compare('==', BinOp('+', BinOp('*', Var('q'), Var('y')), Var('r')), Var('x')),
+            Compare(">=", Var("r"), IntConst(0))
+        )
+
+    body = Seq(Assign('r', BinOp('-', Var('r'), Var('y'))),
+               Assign('q', BinOp('+', Var('q'), IntConst(1))))
+    stmt = Seq(Assign('q', IntConst(0)),
+               Seq(Assign('r', Var('x')),
+                   While(Compare('>=', Var('r'), Var('y')),
+                         inv_fixed, body)))
+    post = ImpAnd(Compare('==',
+                          BinOp('+', BinOp('*', Var('q'), Var('y')), Var('r')),
+                          Var('x')),
+                  ImpAnd(Compare('>=', Var('r'), IntConst(0)),
+                         Compare('<', Var('r'), Var('y'))))
+
+    verify(pre, stmt, post, "Fixed Division (should PASS)")
 
 
 # ============================================================================
@@ -371,33 +420,38 @@ def test_buggy_div():
 def test_wp_derivation():
     """
     Part (a): Use your VCG to compute wp, then check candidate preconditions.
-    TODO: Implement after you finish Part (b).
     """
     print("=== Part (a): WP Derivation ===")
 
-    # TODO: Build the IMP AST for the program above
     # stmt = Seq(Assign('x', ...), If(...))
     # post = Compare('>', Var('y'), IntConst(0))
+    stmt = Seq(Assign('x', BinOp("+", Var('x'), IntConst(1))), If(Compare(">", Var("x"), IntConst(0)),
+        Assign("y", BinOp("*", Var("x"), IntConst(2))), Assign("y", BinOp("-", IntConst(0), Var("x")))
+    ))
 
-    # TODO: Compute wp(stmt, post_z3) and print it
-    # wp_result = wp(stmt, bexp_to_z3(post))
-    # print(f"  wp = {wp_result}")
+    post = Compare(">", Var("y"), IntConst(0))
 
-    # TODO: For each candidate precondition, check if pre → wp is valid
-    # candidates = [
-    #     ("x >= 0",  z3_var('x') >= 0),
-    #     ("x >= -1", z3_var('x') >= -1),
-    #     ("x == -1", z3_var('x') == -1),
-    # ]
-    # for name, pre in candidates:
-    #     s = Solver()
-    #     s.add(Not(Implies(pre, wp_result)))
-    #     result = s.check()
-    #     valid = (result == unsat)
-    #     print(f"  {name}: {'VALID' if valid else 'INVALID'}")
+    wp_result = wp(stmt, bexp_to_z3(post))
+    print(f"  wp = {wp_result}")
+
+    candidates = [
+        ("x >= 0",  z3_var('x') >= 0),
+        ("x >= -1", z3_var('x') >= -1),
+        ("x == -1", z3_var('x') == -1),
+    ]
+    for name, pre in candidates:
+        s = Solver()
+        s.add(Not(Implies(pre, wp_result)))
+        result = s.check()
+        valid = (result == unsat)
+        print(f"  {name}: {'VALID' if valid else 'INVALID'}")
     #     # [EXPLAIN] in a comment: why is this precondition valid or invalid?
 
-    print("  TODO: implement after Part (b)")
+    # x >= 0 Valid because this is a precondition strengthening from weakest precondition.
+    # With a weakest precondition of x > -1 or x < -1, x >= 0 is stronger and therefore valid.
+    # x >= -1 is not valid because it is weaker than x > -1 or x < -1 -> it includes x == -1 which the WP does not
+    # x == -1 is not valid because it includes x == -1, which is not a valid value in the WP.
+
     print()
 
 

@@ -15,8 +15,10 @@ def part_a():
     x, y, z = Ints('x y z')
     s = Solver()
 
-    # TODO: Add constraints
-    # s.add(...)
+    s.add(x + 2 * y == z)
+    s.add(z > 10)
+    s.add(x > 0)
+    s.add(y > 0)
 
     print("=== Part (a) ===")
     if s.check() == sat:
@@ -36,8 +38,7 @@ def part_b():
     x = Int('x')
     s = Solver()
 
-    # TODO: Add the *negation* of the formula and check UNSAT
-    # s.add(...)
+    s.add(And(x > 5, x <=3))
 
     print("=== Part (b) ===")
     result = s.check()
@@ -67,8 +68,8 @@ def part_c():
     f = Function('f', S, S)
     s = Solver()
 
-    # TODO: Add the three constraints
-    # s.add(...)
+    # Claude caught I had f(f(f(f(x)))) here rather than 3 of them
+    s.add(And(f(f(x)) == x, f(f(f(x))) == x, f(x) != x))
 
     print("=== Part (c) ===")
     result = s.check()
@@ -76,7 +77,12 @@ def part_c():
         print(f"SAT: {s.model()}")
     else:
         print("UNSAT")
-    # TODO: Add Z3 derivation steps below (see STEP 2 above).
+        s2 = Solver()
+        s2.add(And(f(x) == f(f(f(x)))))
+        print(s2.check())
+        s3 = Solver()
+        s3.add(And(f(f(x)) == f(f(f(f(x))))))
+        print(s3.check())
     print()
 
 
@@ -90,6 +96,11 @@ def part_c():
 # [EXPLAIN] in a comment below: Why are these two axioms together sufficient
 # to fully characterize Store/Select behavior? (2–3 sentences)
 # ---------------------------------------------------------------------------
+# These two axioms are toghether sufficient to fully characterize Store/Select behavior because
+# they are valid for the full range of possible actions on an array. The first axiom asserts that for
+# any value of i that the value is actually stored (as i = j), and as such ensures that the array stores
+# as it is supposed to. The second axiom asserts that storing a value at an index leaves the rest of the 
+# indexes unchanged. As a result, we can say this characterizes the entire range of behavior.
 def part_d():
     a = Array('a', IntSort(), IntSort())
     i, j, v = Ints('i j v')
@@ -98,15 +109,13 @@ def part_d():
 
     # Axiom 1: Read-over-write HIT
     s1 = Solver()
-    # TODO: Negate axiom 1 and check UNSAT
-    # s1.add(...)
+    s1.add(And(i == j, Select(Store(a,i,v),j) != v))
     r1 = s1.check()
     print(f"Axiom 1 (hit):  {'Valid' if r1 == unsat else 'INVALID'}")
 
     # Axiom 2: Read-over-write MISS
     s2 = Solver()
-    # TODO: Negate axiom 2 and check UNSAT
-    # s2.add(...)
+    s2.add(And(i != j, Select(Store(a,i,v), j) != Select(a,j)))
     r2 = s2.check()
     print(f"Axiom 2 (miss): {'Valid' if r2 == unsat else 'INVALID'}")
     print()

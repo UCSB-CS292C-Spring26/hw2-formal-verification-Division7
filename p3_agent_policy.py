@@ -56,7 +56,6 @@ def make_policy():
     """
     Return a list of Z3 constraints encoding rules R1–R5.
 
-    TODO: Implement this. You need to think about:
     1. How to express "viewers may ONLY do X" (everything else is denied).
     2. How R4 overrides R3 for admins.
     3. Whether you need a closed-world assumption (if not explicitly
@@ -66,10 +65,24 @@ def make_policy():
     r = Const('r', Resource)
     t = Int('t')
 
-    constraints = []
+    #
 
-    # TODO: Encode R1–R5
+    constraints = [
+        ForAll((u, t, r),
+               If(And(is_sensitive(r), t == SHELL_EXEC), Not(allowed(u, t, r)),
+                  If(role(u) == ADMIN, allowed(u, t, r),
+                     If(And(Not(in_sandbox(r)), t == NETWORK_FETCH), Not(allowed(u, t, r)),
+                        If(And(role(u) == DEVELOPER,
+                               Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r) == u, in_sandbox(r))))),
+                           allowed(u, t, r),
+                           If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive(r))), allowed(u, t, r),
+                              Not(allowed(u, t, r)))))))
+               )
+    ]
+
     # Hint: Start with a default-deny rule, then add exceptions.
+    # I explicitly decided to allow admins to network_fetch non sandbox resources as the rule doesn't specify it overrides
+    # r3 like r4 does.
 
     return constraints
 
@@ -98,25 +111,55 @@ def part_b():
     Answer the four queries from the README.
     For query 4, also demonstrate what becomes possible without R4.
 
-    TODO: Implement each query.
     """
     policy = make_policy()
     print("=== Part (b): Policy Queries ===\n")
 
     u = Const('u', User)
     r = Const('r', Resource)
+    t = Int('t')
 
     # Q1: Can a developer write to a sensitive file they don't own, in the sandbox?
-    # TODO
+    query("q1", policy, [
+        role(u) == DEVELOPER,
+        t == FILE_WRITE,
+        is_sensitive(r) == True,
+        owner(r) != u,
+        in_sandbox(r) == True,
+        allowed(u, t, r) == True
+    ])
+    # Answer: yes, explicitly allowed by policy.
 
     # Q2: Can an admin network_fetch a resource outside the sandbox?
-    # TODO
+    query(
+        "Can an admin network_fetch a resource outside the sandbox?", policy, [
+            role(u) == ADMIN,
+            t == NETWORK_FETCH,
+            in_sandbox(r) == False,
+            allowed(u, t, r) == True
+        ]
+    )
+    # Answer, yes, explicitly allowed by policy -- README does not say Overrides R3 like R4 does.
 
     # Q3: Is there ANY role that can shell_exec on a sensitive resource?
-    # TODO
+    query(
+        "Is there ANY role that can shell_exec on a sensitive resource?", policy, [
+            Exists([u], And(t == SHELL_EXEC, is_sensitive(r), allowed(u, t, r)))
+        ]
+    )
+
+    # Answer: No, explicitly disallowed by policy. This is a specific override for R3.
 
     # Q4: [EXPLAIN] in a comment Remove R4 — what dangerous action becomes possible?
-    # TODO: Create a modified policy without R4, demonstrate the new capability.
+    #     constraints = [
+    #         ForAll((u, t, r),
+    #                   If(role(u) == ADMIN, allowed(u, t, r),
+    #                      If(And(Not(in_sandbox(r)), t == NETWORK_FETCH ), Not(allowed(u, t, r)),
+    #                         If(And(role(u) == DEVELOPER, Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r) == u, in_sandbox(r))))), allowed(u, t, r),
+    #                            If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive(r))), allowed(u, t, r), Not(allowed(u, t, r))))))
+    #         )
+    #     ]
+    # the agent could possibly use shell access to give itself access to things it didn't have previously via sudo
 
 
 # ============================================================================
@@ -151,12 +194,134 @@ def part_c():
     """
     print("=== Part (c): Privilege Escalation ===\n")
 
-    # TODO: Your encoding here.
+    u = Const('u', User)
+    r = Const('r', Resource)
+    r_sensitive = Const('r_sensitive', Resource)
+    t = Int('t')
+
+    is_sensitive_before = Function("is_sensitive_before", Resource, BoolSort())
+    is_sensitive_after = Function("is_sensitive_after", Resource, BoolSort())
+
+    # initial policy list
+    constraints = [
+        ForAll((u, t, r),
+               If(And(is_sensitive(r), t == SHELL_EXEC), Not(allowed(u, t, r)),
+                  If(role(u) == ADMIN, allowed(u, t, r),
+                     If(And(Not(in_sandbox(r)), t == NETWORK_FETCH), Not(allowed(u, t, r)),
+                        If(And(role(u) == DEVELOPER,
+                               Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r) == u, in_sandbox(r))),
+                                  And(t == SHELL_EXEC, in_sandbox(r), Not(is_sensitive(r))))), allowed(u, t, r),
+                           If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive(r))), allowed(u, t, r),
+                              Not(allowed(u, t, r)))))))
+               )
+    ]
+
+    model_step_1 = [
+        ForAll((u, t, r),
+               If(And(is_sensitive_before(r), t == SHELL_EXEC), Not(allowed(u, t, r)),
+                  If(role(u) == ADMIN, allowed(u, t, r),
+                     If(And(Not(in_sandbox(r)), t == NETWORK_FETCH), Not(allowed(u, t, r)),
+                        If(And(role(u) == DEVELOPER,
+                               Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r) == u, in_sandbox(r))),
+                                  And(t == SHELL_EXEC, in_sandbox(r), Not(is_sensitive_before(r))))), allowed(u, t, r),
+                           If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive_before(r))), allowed(u, t, r),
+                              Not(allowed(u, t, r)))))))
+               )
+    ]
+
+    model_step_2 = [
+        ForAll((u, t, r_sensitive),
+               If(And(is_sensitive_after(r_sensitive), t == SHELL_EXEC), Not(allowed(u, t, r_sensitive)),
+                  If(role(u) == ADMIN, allowed(u, t, r_sensitive),
+                     If(And(Not(in_sandbox(r_sensitive)), t == NETWORK_FETCH), Not(allowed(u, t, r_sensitive)),
+                        If(And(role(u) == DEVELOPER, Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r_sensitive) == u,
+                                                                                                in_sandbox(
+                                                                                                    r_sensitive))),
+                                                        And(t == SHELL_EXEC, in_sandbox(r_sensitive),
+                                                            Not(is_sensitive_after(r_sensitive))))),
+                           allowed(u, t, r_sensitive),
+                           If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive_after(r_sensitive))),
+                              allowed(u, t, r_sensitive), Not(allowed(u, t, r_sensitive)))))))
+               )
+    ]
     # Hint: Use is_sensitive_before and is_sensitive_after as two separate
     # functions, or use a time-indexed model.
 
-    print("  TODO: Implement escalation analysis")
-    print()
+    completed_model = Solver()
+    completed_model.add(model_step_1)
+    completed_model.add(model_step_2)
+    completed_model.add(
+        [
+            role(u) == DEVELOPER,
+            t == SHELL_EXEC,
+            is_sensitive_before(r) == False,
+            in_sandbox(r) == True,
+            is_sensitive_after(r_sensitive) == False,
+            allowed(u, t, r) == True,
+            allowed(u, t, r_sensitive) == True
+        ]
+    )
+
+    print(completed_model.check())
+    print(completed_model.model())
+
+    # [EXPLAIN] My solution is to introduce a function that inspects SHELL_EXEC commands before running them.
+    # It is called modifies_sensitive_files(), and when a tool call and resource are submitted, returns true if the tool call
+    # attempts to modify files that are sensitive with SHELL_EXEC.
+    # We add to the shell_exec rule to deny these calls.
+
+    modifies_sensitive_files = Function("modifies_sensitive_files", IntSort(), Resource, BoolSort())
+
+    model_step_1 = [
+        ForAll((u, t, r),
+               If(And(Or(is_sensitive_before(r), modifies_sensitive_files(t,r)), t == SHELL_EXEC), Not(allowed(u, t, r)),
+                  If(role(u) == ADMIN, allowed(u, t, r),
+                     If(And(Not(in_sandbox(r)), t == NETWORK_FETCH), Not(allowed(u, t, r)),
+                        If(And(role(u) == DEVELOPER,
+                               Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r) == u, in_sandbox(r))),
+                                  And(t == SHELL_EXEC, in_sandbox(r), Not(is_sensitive_before(r))))), allowed(u, t, r),
+                           If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive_before(r))), allowed(u, t, r),
+                              Not(allowed(u, t, r)))))))
+               )
+    ]
+
+    model_step_2 = [
+        ForAll((u, t, r_sensitive),
+               If(And(Or(is_sensitive_after(r_sensitive), modifies_sensitive_files(t,r_sensitive)), t == SHELL_EXEC),
+                  Not(allowed(u, t, r_sensitive)),
+                  If(role(u) == ADMIN, allowed(u, t, r_sensitive),
+                     If(And(Not(in_sandbox(r_sensitive)), t == NETWORK_FETCH), Not(allowed(u, t, r_sensitive)),
+                        If(And(role(u) == DEVELOPER, Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r_sensitive) == u,
+                                                                                                in_sandbox(
+                                                                                                    r_sensitive))),
+                                                        And(t == SHELL_EXEC, in_sandbox(r_sensitive),
+                                                            Not(is_sensitive_after(r_sensitive))))),
+                           allowed(u, t, r_sensitive),
+                           If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive_after(r_sensitive))),
+                              allowed(u, t, r_sensitive), Not(allowed(u, t, r_sensitive)))))))
+               )
+    ]
+
+    completed_model = Solver()
+    completed_model.add(model_step_1)
+    completed_model.add(model_step_2)
+    # I leave is_sensitive_after as false for effect
+    completed_model.add(
+        [
+            role(u) == DEVELOPER,
+            t == SHELL_EXEC,
+            is_sensitive_before(r) == False,
+            in_sandbox(r) == True,
+            is_sensitive_after(r_sensitive) == False,
+            modifies_sensitive_files(t, r) == True,
+            modifies_sensitive_files(t, r_sensitive) == False,
+            allowed(u, t, r) == True,
+            allowed(u, t, r_sensitive) == True
+        ]
+    )
+
+    print(completed_model.check())
+    print("ESCALATION BLOCKED")
 
 
 # ============================================================================

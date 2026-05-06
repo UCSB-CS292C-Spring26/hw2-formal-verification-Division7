@@ -43,7 +43,6 @@ OUTPUT_FILE = 1
 #   ∧ ∀p. p ≠ OUTPUT_FILE → Select(fs_final, p) = Select(fs_initial, p)
 #                                                                  [nothing else changed]
 #
-# TODO: Encode this as a Z3 validity check and verify it.
 # ============================================================================
 
 def verify_correct_composition():
@@ -76,18 +75,15 @@ def verify_correct_composition():
                             Select(fs_final, p) == Select(fs_initial, p)))
     )
 
-    # TODO: Check that (skill_A_post ∧ skill_B_post) → composed_post is valid.
     # That is, check that the negation is UNSAT.
     s = Solver()
-    # s.add(skill_A_post)
-    # s.add(skill_B_post)
-    # s.add(Not(composed_post))
+    s.add(skill_A_post)
+    s.add(skill_B_post)
+    s.add(Not(composed_post))
 
-    # TODO: uncomment and check
-    # result = s.check()
+    result = s.check()
 
-    print("  TODO: Implement verification")
-    print()
+    print(result)
 
 
 # ============================================================================
@@ -101,7 +97,6 @@ def verify_correct_composition():
 #
 # The composed postcondition should FAIL because the input file is modified.
 #
-# TODO: Encode this and show the counterexample.
 # ============================================================================
 
 def verify_buggy_composition():
@@ -130,13 +125,13 @@ def verify_buggy_composition():
                             Select(fs_final, p) == Select(fs_initial, p)))
     )
 
-    # TODO: Check that the composed postcondition FAILS.
     # Print the counterexample showing how the input file gets corrupted.
     s = Solver()
-    # s.add(...)
+    s.add(skill_A_post, buggy_B_post)
+    s.add(Not(composed_post))
 
-    print("  TODO: Implement buggy verification")
-    print()
+    print(s.check())
+    print(s.model())
 
 
 # ============================================================================
@@ -148,8 +143,13 @@ def verify_buggy_composition():
 # Cursor, Copilot, etc.) or from what you learned in class. What would a runtime monitor need to check to
 # prevent this class of bugs?
 
-# TODO: Write your explanation here as a comment.
 # ...
+# [EXPLAIN] In an actual agent workflow, a tool can behave in a way that the agent doesn't entirely understand.
+# For example, as I mentioned in part 4, a Claude agent in a company workspace thought that it wouldn't be hooked
+# up to a production environment and so ran `terraform destroy` in it's CI environment, thinking it would remove the
+# qa architecture. However, it was attached to production, and instead destroyed the production environment.
+# In order to prevent these kind of bugs, a runtime monitor would need a strict permission system as well as
+# a way to validate actions that the agent is taking to ensure they are what it should be doing.
 # ============================================================================
 
 
