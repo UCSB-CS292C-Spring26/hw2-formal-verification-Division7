@@ -77,12 +77,24 @@ def part_c():
         print(f"SAT: {s.model()}")
     else:
         print("UNSAT")
+        # Step 2: derive why — validity checks for each reasoning step.
+        # (Validity check pattern: negate conclusion under premise; UNSAT means valid.)
+        # [Claude rewrote these checks; originals were standalone SAT queries with no premises]
+
+        # Step A: from f(f(x))=x, applying f to both sides gives f(f(f(x)))=f(x).
         s2 = Solver()
-        s2.add(And(f(x) == f(f(f(x)))))
-        print(s2.check())
+        s2.add(f(f(x)) == x)        # premise
+        s2.add(f(f(f(x))) != f(x))  # negated conclusion
+        print(f"  f(f(x))=x  →  f(f(f(x)))=f(x):  {'Valid' if s2.check() == unsat else 'Invalid'}")
+
+        # Step B: combining f(f(f(x)))=f(x) with f(f(f(x)))=x forces f(x)=x.
         s3 = Solver()
-        s3.add(And(f(f(x)) == f(f(f(f(x))))))
-        print(s3.check())
+        s3.add(f(f(f(x))) == f(x))  # from step A
+        s3.add(f(f(f(x))) == x)     # second original equation
+        s3.add(f(x) != x)           # negated conclusion
+        print(f"  f(f(f(x)))=f(x) ∧ f(f(f(x)))=x  →  f(x)=x:  {'Valid' if s3.check() == unsat else 'Invalid'}")
+
+        print("  f(x)=x contradicts f(x)≠x, so the conjunction is UNSAT.")
     print()
 
 

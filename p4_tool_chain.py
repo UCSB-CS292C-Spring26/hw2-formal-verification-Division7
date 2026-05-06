@@ -314,7 +314,8 @@ def part_b():
     # What does each one catch that the other might miss?
     # [EXPLAIN]: The DFA covers runtime solutions of the sandbox. It is the only one that runs in practice, and can actively
     # block the agent from completing harmful activities. The Z3 bounded approach is good for catching problems early, but
-    # cannot actually block at runtime. Instead, it can only indicate problems.
+    # cannot actually block at runtime. Instead, it can only indicate problems. However, the benefit of that is that it can
+    # indicate any potential design problems in advance. DFAs are like a last line of defense.
 
 
 # ============================================================================

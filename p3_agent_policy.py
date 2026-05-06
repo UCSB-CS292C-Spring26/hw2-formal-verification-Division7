@@ -150,16 +150,30 @@ def part_b():
 
     # Answer: No, explicitly disallowed by policy. This is a specific override for R3.
 
-    # Q4: [EXPLAIN] in a comment Remove R4 — what dangerous action becomes possible?
-    #     constraints = [
-    #         ForAll((u, t, r),
-    #                   If(role(u) == ADMIN, allowed(u, t, r),
-    #                      If(And(Not(in_sandbox(r)), t == NETWORK_FETCH ), Not(allowed(u, t, r)),
-    #                         If(And(role(u) == DEVELOPER, Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r) == u, in_sandbox(r))))), allowed(u, t, r),
-    #                            If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive(r))), allowed(u, t, r), Not(allowed(u, t, r))))))
-    #         )
-    #     ]
-    # the agent could possibly use shell access to give itself access to things it didn't have previously via sudo
+    # Q4: Remove R4 — what dangerous action becomes possible?
+    # [Claude: implemented the missing query; policy_no_r4 is make_policy() with the
+    #  shell_exec-on-sensitive guard removed so the If-tree starts with the admin check.]
+    policy_no_r4 = [
+        ForAll((u, t, r),
+               If(role(u) == ADMIN, allowed(u, t, r),
+                  If(And(Not(in_sandbox(r)), t == NETWORK_FETCH), Not(allowed(u, t, r)),
+                     If(And(role(u) == DEVELOPER,
+                            Or(t == FILE_READ, And(t == FILE_WRITE, Or(owner(r) == u, in_sandbox(r))))),
+                        allowed(u, t, r),
+                        If(And(role(u) == VIEWER, t == FILE_READ, Not(is_sensitive(r))),
+                           allowed(u, t, r),
+                           Not(allowed(u, t, r)))))))
+    ]
+    query(
+        "Q4 (no R4): Can an admin shell_exec on a sensitive resource?", policy_no_r4, [
+            role(u) == ADMIN,
+            t == SHELL_EXEC,
+            is_sensitive(r) == True,
+            allowed(u, t, r) == True,
+        ]
+    )
+    # Answer: yes — without R4, the admin allow-all fires and permits shell_exec on sensitive
+    # resources. This is the dangerous action R4 was specifically introduced to prevent.
 
 
 # ============================================================================
@@ -320,8 +334,10 @@ def part_c():
         ]
     )
 
-    print(completed_model.check())
-    print("ESCALATION BLOCKED")
+    result = completed_model.check()
+    print(result)
+    if result == unsat:  # Claude: made conditional — README says "print on success"
+        print("ESCALATION BLOCKED")
 
 
 # ============================================================================

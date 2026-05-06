@@ -194,15 +194,15 @@ def verify(pre: BExp, stmt: Stmt, post: BExp, label: str = "Program"):
 
     print(f"=== {label} ===")
     side_is_sat = False
-    for check in side_vcs:
+    for label, vc in side_vcs:  # Claude: unpack tuple so label appears in output
         stupid_side_solver = Solver()
-        stupid_side_solver.add(Not(check[1]))
+        stupid_side_solver.add(Not(vc))
         side_result = stupid_side_solver.check()
         if side_result == unsat:
-            print("side is also unsat. yay.")
+            print(f"  VC [{label}]: holds")
         else:
-            print(f"{check[0]} is SAT")
-            print(f"answer: {stupid_side_solver.model()}")
+            print(f"  VC [{label}]: FAILS")
+            print(f"    counterexample: {stupid_side_solver.model()}")
             side_is_sat = True
     solver_result = solver.check()
     if solver_result == unsat and not side_is_sat:
